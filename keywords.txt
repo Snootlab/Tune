@@ -1,0 +1,66 @@
+#######################################
+# Syntax Coloring Map SD
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+Tune	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+begin	KEYWORD2
+readSCI	KEYWORD2
+writeSCI	KEYWORD2
+writeSDI	KEYWORD2
+checkRegisters	KEYWORD2
+setVolume	KEYWORD2
+sineTest	KEYWORD2
+play	KEYWORD2
+playTrack	KEYWORD2
+playPlaylist	KEYWORD2
+setBass	KEYWORD2
+setTreble	KEYWORD2
+getTrackInfo	KEYWORD2
+getTrackTitle	KEYWORD2
+getTrackArtist	KEYWORD2
+getTrackAlbum	KEYWORD2
+pauseMusic	KEYWORD2
+resumeMusic	KEYWORD2
+stopTrack	KEYWORD2
+isPlaying	KEYWORD2
+getState	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+SCI_MODE	LITERAL1
+SCI_STATUS	LITERAL1
+SCI_BASS	LITERAL1
+SCI_CLOCKF	LITERAL1
+SCI_DECODE_TIME	LITERAL1
+SCI_AUDATA	LITERAL1
+SCI_WRAM	LITERAL1
+SCI_WRAMADDR	LITERAL1
+SCI_HDAT0	LITERAL1
+SCI_HDAT1	LITERAL1
+SCI_AIADDR	LITERAL1
+SCI_VOL	LITERAL1
+SCI_AICTRL0	LITERAL1
+SCI_AICTRL1	LITERAL1
+SCI_AICTRL2	LITERAL1
+SCI_AICTRL3	LITERAL1
+
+TITLE	LITERAL1
+ARTIST	LITERAL1
+ALBUM	LITERAL1
+
+STD	LITERAL1
+LOS	LITERAL1
+HIS	LITERAL1
+
+
