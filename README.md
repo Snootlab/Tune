@@ -1,4 +1,4 @@
-# Tune
+# Tune - MP3 decoder shield for Arduino
 
 Copyleft Snootlab 2014
 
