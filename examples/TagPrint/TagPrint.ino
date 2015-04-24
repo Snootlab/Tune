@@ -1,10 +1,11 @@
 /*
  * MP3 tag print test for Tune shield by Snootlab
- * Copyleft Snootlab 2014
+ * Copyleft Snootlab 2015
  */
 
 // Library needed
 #include <Tune.h>
+#include <SdFat.h>
 
 // Object declaration
 Tune player;

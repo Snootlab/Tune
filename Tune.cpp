@@ -3,22 +3,23 @@
 	Coded by Laetitia Hardy-Dessources
 	Inspired by SFEMP3Shield library by Bill Porter
 	
-	2014.07.25 - v1.0
+	2015.04.24 - v1.1
+	This version is based on Bill Greiman's SdFat lib instead of the Arduino IDE's SD lib.
 	
 	Licence CC-BY-SA 3.0
 */
 
 #if (ARDUINO >= 100)
- #include <Arduino.h>
+	#include <Arduino.h>
 #else
- #include <WProgram.h>
+	#include <WProgram.h>
 #endif
 
 #include <Tune.h>
-#include <SPI.h>
-#include <SD.h>
+#include <SdFat.h>
 
-File Tune::track;
+SdFat sd;
+SdFile Tune::track;
 unsigned char Tune::buffer[32];
 
 /** 
@@ -28,37 +29,37 @@ unsigned char Tune::buffer[32];
 void Tune::begin(void)
 {
 	// initializes used pins
+	pinMode(DREQ, INPUT);
 	pinMode(XCS, OUTPUT);
 	pinMode(XDCS, OUTPUT);
-	pinMode(DREQ, INPUT);
-	
-	// needed for SPI & SD lib
-	pinMode(10, OUTPUT);
-	
-	digitalWrite(10, HIGH);
+	pinMode(SDCS, OUTPUT);
 	
 	// Pull-up resistor
 	digitalWrite(DREQ, HIGH);
 	// Deselect control & data ctrl
 	digitalWrite(XCS, HIGH);
 	digitalWrite(XDCS, HIGH);
-		
-	// configure & begin SPI bus
-	SPI.begin();	
+	// Deselect SD's chip select
+	digitalWrite(SDCS, HIGH);
+	
+	// Initialize SD card
+	if (!sd.begin(SDCS, SPI_HALF_SPEED))
+	{
+		sd.initErrorHalt(); // stay there if there's a problem
+		while(1);
+	}
+	
+	SPI.begin();
 	SPI.setDataMode(SPI_MODE0);
 	// Both SCI and SDI read data MSB first
 	SPI.setBitOrder(MSBFIRST);
 	// From the datasheet, max SPI reads are CLKI/6. Here CLKI = 26MHz -> SPI max speed is 4.33MHz.
 	// We'll take 16MHz/4 = 4MHz to be safe.
+	// Plus it's the max speed advised when using a resistor-based lvl converter with an SD card.
 	SPI.setClockDivider(SPI_CLOCK_DIV4);
 	SPI.transfer(0xFF);
-	delay(10);
 
-	if (!SD.begin())
-	{
-		Serial.println("Card failed");
-		return;
-	}
+	delay(10);
 
 	// Software reset
 	Tune::writeSCI(SCI_MODE, 0x08, 0x04);
@@ -71,6 +72,8 @@ void Tune::begin(void)
 	// Wait until the chip is ready
 	while (!digitalRead(DREQ));
 	delay(100);
+	
+	Serial.println("Tune ready !");
 }
 
 /**
@@ -79,24 +82,30 @@ void Tune::begin(void)
 
 unsigned int Tune::readSCI(unsigned char registerAddress)
 {
+	unsigned char hiByte, loByte;
+	
 	// DREQ high <-> VS1011 available
 	while (!digitalRead(DREQ));
-	// Select control & deselect data ctrl
-	digitalWrite(XCS, LOW);
+	// Deselect SD's chip select
+	digitalWrite(SDCS, HIGH);
+	// Deselect data ctrl & select control
 	digitalWrite(XDCS, HIGH);
+	digitalWrite(XCS, LOW);
   
 	// Read instruction
 	SPI.transfer(0x03);
 	SPI.transfer(registerAddress);
-  
-	unsigned char hiByte = SPI.transfer(0x00); // MSB first
-	unsigned char loByte = SPI.transfer(0x00);
+	// MSB first
+	hiByte = SPI.transfer(0x00); 
+	loByte = SPI.transfer(0x00);
+	
 	while (!digitalRead(DREQ)); // wait 'til cmd is complete
   
 	// Deselect control
 	digitalWrite(XCS, HIGH);
   
 	unsigned int response = word(hiByte, loByte);
+	
 	return response;
 }
 
@@ -108,19 +117,22 @@ void Tune::writeSCI(unsigned char registerAddress, unsigned char highbyte, unsig
 {
 	// DREQ high <-> VS1011 available
 	while (!digitalRead(DREQ));
-	// Select control & deselect data ctrl
-	digitalWrite(XCS, LOW);
+	// Deselect SD's chip select
+	digitalWrite(SDCS, HIGH);
+	// Deselect data ctrl & select control
 	digitalWrite(XDCS, HIGH);
-  
+	digitalWrite(XCS, LOW);
+
 	// Write instruction
 	SPI.transfer(0x02);
 	SPI.transfer(registerAddress);
-	SPI.transfer(highbyte); // MSB first
+	// MSB first
+	SPI.transfer(highbyte); 
 	SPI.transfer(lowbyte);
-  
+	
     // wait til cmd is complete
 	while (!digitalRead(DREQ));
-  
+	
 	// Deselect control
 	digitalWrite(XCS, HIGH);
 }
@@ -132,10 +144,14 @@ void Tune::writeSCI(unsigned char registerAddress, unsigned char highbyte, unsig
 void Tune::writeSDI(unsigned char data)
 {
 	while (!digitalRead(DREQ));
-    // Select data ctrl & deselect ctrl
-    digitalWrite(XDCS, LOW);
+    // Deselect SD's chip select
+	digitalWrite(SDCS, HIGH);
+	// Deselect ctrl & select data control
 	digitalWrite(XCS, HIGH);
-    SPI.transfer(data);
+	digitalWrite(XDCS, LOW);
+
+	SPI.transfer(data);
+	
     // Deselect data ctrl
     digitalWrite(XDCS, HIGH);
 }
@@ -196,6 +212,7 @@ void Tune::sineTest(int freq)
 	
 	// Enable SDI tests
 	Tune::writeSCI(SCI_MODE, 0x08, 0x20);
+	
 	// Activate sine test
 	for (int i=0; i<8; i++)
 	{
@@ -208,7 +225,7 @@ void Tune::sineTest(int freq)
 	{
 		Tune::writeSDI(endSine[j]);
 	}
-	
+
 	// Disable SDI tests
 	Tune::writeSCI(SCI_MODE, 0x08, 0x00);
 }
@@ -218,18 +235,15 @@ void Tune::sineTest(int freq)
 	http://en.wikipedia.org/wiki/8.3_filename
 */
 
-int Tune::play(char* trackName)
+int Tune::play(const char* trackName)
 {	
 	// skip if already playing a track
 	if (isPlaying()) return 1;
-
-	// open the file in read mode 
-	track = SD.open(trackName);
 	
 	// exit if track not found
-	if (!track)
+	if (!track.open(trackName, O_READ))
 	{
-		Serial.println("Track not found !");
+		sd.errorHalt("Track not found !");
 		return 2;
 	}
 	
@@ -262,7 +276,7 @@ int Tune::playTrack(int trackNo)
 {
 	// storage place for track titles
 	char songName[] = "track000.mp3";
-	// print the track number onto the file name
+	// print track number onto the file name
 	sprintf(songName, "track%03d.mp3", trackNo);
 	// play given track
 	return Tune::play(songName);
@@ -412,7 +426,10 @@ void Tune::resumeMusic()
 void Tune::stopTrack()
 {
 	// Skip if not already playing
-	if ((playState != pause) && (playState != playback)) return;
+	if ((playState != pause) && (playState != playback)) 
+	{
+		return;
+	}
 	
 	detachInterrupt(0);
 	playState = idle;
@@ -460,7 +477,7 @@ void Tune::skipTag()
 {
 	unsigned char id3[3]; // pointer to the first 3 characters we read in
 		
-	track.seek(0);
+	track.seekSet(0);
 	track.read(id3, 3);
 	
 	// if the first 3 characters are ID3 then we have an ID3v2 tag
@@ -481,13 +498,13 @@ void Tune::skipTag()
 		unsigned long v21 =  (((unsigned long) pb[0] << (7*3)) + ((unsigned long) pb[1] << (7*2)) + ((unsigned long) pb[2] << (7)) + pb[3]);
 		
 		// go to end of tag
-		track.seek(v21);
+		track.seekSet(v21);
 		return;
 	}
 	else
 	{
 		// if there's no tag, get back to start and playback
-		track.seek(0);
+		track.seekSet(0);
 		return;
 	}
 }
@@ -504,7 +521,7 @@ int Tune::getID3v1(unsigned char offset, char* infobuffer)
 		detachInterrupt(0);
 	}
 	// save current position for later
-	unsigned long currentPosition = track.position();
+	unsigned long currentPosition = track.curPosition();
 	
 	// save the value corresponding to the needed frame for later 
 	tagFrame = offset;
@@ -512,11 +529,11 @@ int Tune::getID3v1(unsigned char offset, char* infobuffer)
 	unsigned char ID3v1[3]; // array to store the 'TAG' identifier of ID3v1 tags
 		
 	// skip to end of file
-	unsigned long tagPosition = track.size();
+	unsigned long tagPosition = track.fileSize();
 	
 	// skip to tag start
 	tagPosition -= 128;
-	track.seek(tagPosition);
+	track.seekSet(tagPosition);
 	
 	// read the first 3 characters available
 	track.read(ID3v1, 3);
@@ -526,26 +543,25 @@ int Tune::getID3v1(unsigned char offset, char* infobuffer)
 	{
 		// we found an ID3v1 tag !
 		// let's go find the frame we're looking for
-		tagPosition = (track.position() + offset);
-		track.seek(tagPosition);
+		tagPosition = (track.curPosition() + offset);
+		track.seekSet(tagPosition);
 		
 		// read the tag and store it
 		track.read(infobuffer, 30);
 		
 		//go back to where we stopped and enable playback again
-		track.seek(currentPosition);
+		track.seekSet(currentPosition);
 		if (playState == playback)
 		{
 			attachInterrupt(0, feed, RISING);
 		}
-		
 		return 1;
 	}
 	// if they're not
 	else
 	{
 		//go back to where we stopped and enable playback again
-		track.seek(currentPosition);
+		track.seekSet(currentPosition);
 		if (playState == playback)
 		{
 			attachInterrupt(0, feed, RISING);
@@ -615,13 +631,11 @@ int Tune::getID3v2(char* infobuffer)
 		detachInterrupt(0);
 	}
 	// save current position for later
-	unsigned long currentPosition = track.position();
-
-
+	unsigned long currentPosition = track.curPosition();
 
 	unsigned char ID3v2[3]; // pointer to the first 3 characters we read in
 		
-	track.seek(0);
+	track.seekSet(0);
 	track.read(ID3v2, 3);
 		
 	// if the first 3 characters are ID3 then we have an ID3v2 tag
@@ -637,8 +651,6 @@ int Tune::getID3v2(char* infobuffer)
 		track.read(pb, 2);
 		track.read(pb, 4);
 			
-		
-			
 		// to combine these 4 bytes together into a single value, we have to
 		// shift one other to get it into its correct position	
 		// a quirk of the spec is that the MSb of each byte is set to 0
@@ -648,50 +660,43 @@ int Tune::getID3v2(char* infobuffer)
 		{
 			Tune::findv22(infobuffer);
 			//go back to where we stopped and enable playback again
-			track.seek(currentPosition);
+			track.seekSet(currentPosition);
 			if (playState == playback)
 			{
 				attachInterrupt(0, feed, RISING);
 			}
-			
-			
 			return 2;
 		}
 		else if (tagVersion == 3)
 		{
 			Tune::findv23(infobuffer);
 			//go back to where we stopped and enable playback again
-			track.seek(currentPosition);
+			track.seekSet(currentPosition);
 			if (playState == playback)
 			{
 				attachInterrupt(0, feed, RISING);
 			}
-		
 			return 3;
 		}
 		else
 		{
-			
 			//go back to where we stopped and enable playback again
-			track.seek(currentPosition);
+			track.seekSet(currentPosition);
 			if (playState == playback)
 			{
 				attachInterrupt(0, feed, RISING);
 			}
-		
 			return 9;
 		}
 	}
 	else
 	{
-		
 		//go back to where we stopped and enable playback again
-		track.seek(currentPosition);
+		track.seekSet(currentPosition);
 		if (playState == playback)
 		{
 			attachInterrupt(0, feed, RISING);
 		}
-		
 		return 0;
 	}
 }
@@ -701,30 +706,23 @@ int Tune::getID3v2(char* infobuffer)
 */
 
 void Tune::findv22(char* infobuffer)
-{		
-	if (tagFrame == TITLE)
+{	
+	switch (tagFrame)
 	{
-		tab[0] = '2';
-		tab[1] = 'T';
-		tab[2] = 'T';
-	}
-	else if (tagFrame == ARTIST)
-	{
-		tab[0] = '1';
-		tab[1] = 'P';
-		tab[2] = 'T';
-	}
-	else if (tagFrame == ALBUM)
-	{
-		tab[0] = 'L';
-		tab[1] = 'A';
-		tab[2] = 'T';
+		case TITLE :
+			tab[0] = '2'; tab[1] = 'T'; tab[2] = 'T'; break;
+		case ARTIST : 
+			tab[0] = '1'; tab[1] = 'P'; tab[2] = 'T'; break;
+		case ALBUM : 
+			tab[0] = 'L'; tab[1] = 'A'; tab[2] = 'T'; break;
+		default : 
+			break;
 	}
 		
 	while (1)
 	{
 		track.read(&c, 1);
-			
+		
 		// shift over previously read byte so we can search for an identifier
 		pb[3] = pb[2];
 		pb[2] = pb[1];
@@ -744,7 +742,6 @@ void Tune::findv22(char* infobuffer)
 				
 			// start reading the actual tag and store it
 			track.read(infobuffer, tl);
-				  
 			break;
 		}
 	}
@@ -756,26 +753,16 @@ void Tune::findv22(char* infobuffer)
 
 void Tune::findv23(char* infobuffer)
 {		
-	if (tagFrame == TITLE)
+	switch (tagFrame)
 	{
-		tab[0] = '2';
-		tab[1] = 'T';
-		tab[2] = 'I';
-		tab[3] = 'T';
-	}
-	else if (tagFrame == ARTIST)
-	{
-		tab[0] = '1';
-		tab[1] = 'E';
-		tab[2] = 'P';
-		tab[3] = 'T';
-	}
-	else if (tagFrame == ALBUM)
-	{
-		tab[0] = 'B';
-		tab[1] = 'L';
-		tab[2] = 'A';
-		tab[3] = 'T';
+		case TITLE :
+			tab[0] = '2'; tab[1] = 'T'; tab[2] = 'I'; tab[3] = 'T'; break;
+		case ARTIST : 
+			tab[0] = '1'; tab[1] = 'E'; tab[2] = 'P'; tab[3] = 'T'; break;
+		case ALBUM : 
+			tab[0] = 'B'; tab[1] = 'L'; tab[2] = 'A'; tab[3] = 'T'; break;
+		default : 
+			break;
 	}
 		
 	while (1)
@@ -802,7 +789,6 @@ void Tune::findv23(char* infobuffer)
 	  
 			// start reading the actual tag and store it
 			track.read(infobuffer, tl);
-				  
 			break;
 		}
 	}
@@ -817,24 +803,25 @@ void Tune::feed()
 	while (digitalRead(DREQ))
 	{
 		//Go out to SD card and try reading 32 new bytes of the track
-		if (!track.read(buffer, sizeof(buffer)))
+		if (!track.read(Tune::buffer, sizeof(Tune::buffer)))
 		{
 			track.close();
 			playState = idle;	
-			
 			detachInterrupt(0);
 			break;
 		}
-		// Select Data Control & deselect ctrl
-		digitalWrite(XDCS, LOW);
+		// Deselect SD's chip select
+		digitalWrite(SDCS, HIGH);
+		// Deselect ctrl & select data control
 		digitalWrite(XCS, HIGH);
+		digitalWrite(XDCS, LOW);
 		
 		// Feed the chip
 		for (int j=0; j<32; j++)
 		{
-			SPI.transfer(buffer[j]);
+			SPI.transfer(Tune::buffer[j]);
 		}
 		// Deselect data control
-		digitalWrite(XDCS, HIGH);
+		digitalWrite(XDCS, HIGH);	
 	}
 }

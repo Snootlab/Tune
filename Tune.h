@@ -3,7 +3,8 @@
 	Coded by Laetitia Hardy-Dessources
 	Inspired by SFEMP3Shield library by Bill Porter
 	
-	2014.07.25 - v1.0
+	2015.04.24 - v1.1
+	This version is based on Bill Greiman's SdFat lib instead of the Arduino IDE's SD lib.
 	
 	Licence CC-BY-SA 3.0
 */
@@ -12,19 +13,20 @@
 #define Tune_h
 
 #if (ARDUINO >= 100)
- #include <Arduino.h>
+	#include <Arduino.h>
 #else
- #include <WProgram.h>
+	#include <WProgram.h>
 #endif
 
-#include <SD.h>
 #include <SPI.h>
+#include <SdFat.h>
 
 /* Pin configuration */
 
-#define XCS 8
-#define XDCS 4
 #define DREQ 2
+#define XDCS 4
+#define XCS  8
+#define SDCS 10
 
 /* SCI registers */
 
@@ -139,20 +141,20 @@
 
 /* SCI_WRAMADDR bits */
 
-#define SCI_WRAM_X_START           0x0000
-#define SCI_WRAM_Y_START           0x4000
-#define SCI_WRAM_I_START           0x8000
-#define SCI_WRAM_IO_START          0xC000
+#define SCI_WRAM_X_START	0x0000
+#define SCI_WRAM_Y_START	0x4000
+#define SCI_WRAM_I_START	0x8000
+#define SCI_WRAM_IO_START	0xC000
 
-#define SCI_WRAM_X_OFFSET  0x0000
-#define SCI_WRAM_Y_OFFSET  0x4000
-#define SCI_WRAM_I_OFFSET  0x8000
-#define SCI_WRAM_IO_OFFSET 0x0000 /* I/O addresses are @0xC000 -> no offset */
+#define SCI_WRAM_X_OFFSET	0x0000
+#define SCI_WRAM_Y_OFFSET	0x4000
+#define SCI_WRAM_I_OFFSET	0x8000
+#define SCI_WRAM_IO_OFFSET	0x0000 /* I/O addresses are @0xC000 -> no offset */
 
 /* SCI_VOL bits */
 
-#define SV_LEFT_B  8
-#define SV_RIGHT_B 0
+#define SV_LEFT_B	8
+#define SV_RIGHT_B	0
 
 #define SV_LEFT  (1<<8)
 #define SV_RIGHT (1<<0)
@@ -191,6 +193,8 @@ static char tab[5]; 		 // array to stock frame identifier
 
 static int playState = idle;
 
+extern SdFat sd;
+
 class Tune
 {
 	public : 
@@ -202,7 +206,7 @@ class Tune
 		void setVolume(char leftChannel, char rightChannel);
 		void setVolume(char volume);
 		void sineTest(int freq);
-		int play(char* trackName);
+		int play(const char* trackName);
 		int playTrack(int trackNo);
 		void playPlaylist(int startNo, int endNo);
 		void setBass(unsigned int bassAmp, unsigned int bassFreq);
@@ -218,7 +222,7 @@ class Tune
 		int getState();
 		
 	private :
-		static File track;
+		static SdFile track;
 		static unsigned char buffer[32];
 		void skipTag();
 		int getID3v1(unsigned char offset, char* infobuffer);
@@ -232,4 +236,3 @@ class Tune
 };
 
 #endif
-		

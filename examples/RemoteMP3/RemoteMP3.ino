@@ -1,6 +1,6 @@
 /*
  * IR test for Tune shield by Snootlab
- * Copyleft Snootlab 2014
+ * Copyleft Snootlab 2015
  */
 
 #include <IRremote.h>
@@ -36,6 +36,7 @@ decode_results results;
 
 // Tune library inclusion and object declaration
 #include <Tune.h>
+#include <SdFat.h>
 Tune player;
 
 // Variable to store the current volume value

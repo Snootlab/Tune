@@ -1,11 +1,12 @@
 /*
  * LCD tag print test for Tune shield by Snootlab
  * This sketch is provided for use with Deuligne shield by Snootlab
- * Copyleft Snootlab 2014
+ * Copyleft Snootlab 2015
  */
 
 // Libraries needed
 #include <Tune.h>
+#include <SdFat.h>
 #include <Wire.h>
 #include <Deuligne.h>
 
@@ -36,7 +37,7 @@ void setup()
   delay(1000);
   
   // Select the track you want to play
-  player.play("track001.mp3");
+  player.play("Thievery.mp3");
 }
 
 void loop()
@@ -55,7 +56,7 @@ void loop()
     lcd.setCursor(0, 1);
     // Print the tag and wait a bit
     lcd.print((char*)&title);
-    delay(1000);
+    delay(2000);
     
     // Same for next frames
     lcd.clear();
@@ -63,13 +64,13 @@ void loop()
     player.getTrackArtist((char*)&artist);
     lcd.setCursor(0, 1);
     lcd.print((char*)&artist);
-    delay(1000);
+    delay(2000);
     
     lcd.clear();
     lcd.print("Album : ");
     player.getTrackAlbum((char*)&album);
     lcd.setCursor(0, 1);
     lcd.print((char*)&album);
-    delay(1000);
+    delay(2000);
   }
 }
