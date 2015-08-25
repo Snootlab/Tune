@@ -3,9 +3,17 @@
 	Coded by Laetitia Hardy-Dessources
 	Inspired by SFEMP3Shield library by Bill Porter
 	
-	2015.04.24 - v1.1
-	This version is based on Bill Greiman's SdFat lib instead of the Arduino IDE's SD lib.
+	2015.08.25 - v1.2 - Rework > cleaned out some useless code, optimized the useful one, wrote new functions to help
 	
+	Changelog : added new method for ::sineTest (defaults @ 1 KHz) + new constants for testing (STD -> STD1, new STD2 & STD3)
+					  new method for ::writeSCI (data sent with a single int)
+					  ::setBit and ::clearBit to access specific register bits
+					  ::sendZeros to clear buffer after a track so that file sequence is more fluid
+				removed ::playPlaylist because it doesn't work anymore (will be fixed in a next version)
+				modif ::stopTrack and ::feed to improve tracklisting
+					  ::setVolume, ::setBass, ::setTreble, ::playTrack to avoid off-range values
+					  ::begin to add return value (1 if everything went OK, 0 if the SD can't initialize) & set volume at setup
+
 	Licence CC-BY-SA 3.0
 */
 
@@ -17,95 +25,96 @@
 
 #include <Tune.h>
 #include <SdFat.h>
+#include <SPI.h>
 
 SdFat sd;
 SdFile Tune::track;
-unsigned char Tune::buffer[32];
+byte Tune::buffer[32];
 
 /** 
 	Initializes the shield : SPI & SD setup, reset of the VS1011e & clock setting
 */
 
-void Tune::begin(void)
+bool Tune::begin()
 {
-	// initializes used pins
-	pinMode(DREQ, INPUT);
-	pinMode(XCS, OUTPUT);
+	// Pin configuration
+	pinMode(DREQ, INPUT_PULLUP);
 	pinMode(XDCS, OUTPUT);
+	pinMode(XCS, OUTPUT);
 	pinMode(SDCS, OUTPUT);
 	
-	// Pull-up resistor
-	digitalWrite(DREQ, HIGH);
 	// Deselect control & data ctrl
 	digitalWrite(XCS, HIGH);
 	digitalWrite(XDCS, HIGH);
 	// Deselect SD's chip select
 	digitalWrite(SDCS, HIGH);
 	
-	// Initialize SD card
+	// SD card initialization
 	if (!sd.begin(SDCS, SPI_HALF_SPEED))
 	{
-		sd.initErrorHalt(); // stay there if there's a problem
-		while(1);
+		sd.initErrorHalt(); // describe problem if there's one
+		return 0; 
 	}
 	
+	// SPI bus initialization
 	SPI.begin();
 	SPI.setDataMode(SPI_MODE0);
 	// Both SCI and SDI read data MSB first
 	SPI.setBitOrder(MSBFIRST);
 	// From the datasheet, max SPI reads are CLKI/6. Here CLKI = 26MHz -> SPI max speed is 4.33MHz.
 	// We'll take 16MHz/4 = 4MHz to be safe.
-	// Plus it's the max speed advised when using a resistor-based lvl converter with an SD card.
+	// Plus it's the max recommended speed when using a resistor-based lvl converter with an SD card.
 	SPI.setClockDivider(SPI_CLOCK_DIV4);
 	SPI.transfer(0xFF);
-
 	delay(10);
-
-	// Software reset
-	Tune::writeSCI(SCI_MODE, 0x08, 0x04);
-	delay(5);
 	
+	// Codec initialization
+	// Software reset
+	setBit(SCI_MODE, SM_RESET);
+	delay(5);
+	// VS1022 "New mode" activation
+	setBit(SCI_MODE, SM_SDINEW);
 	// Clock setting (default is 24.576MHz)
-	Tune::writeSCI(SCI_CLOCKF, 0x32, 0xC8);
+	writeSCI(SCI_CLOCKF, 0x32, 0xC8);
 	delay(5);
 	
 	// Wait until the chip is ready
 	while (!digitalRead(DREQ));
 	delay(100);
 	
+	// Set playState flag
+	playState = idle;
+	
+	// Set volume to avoid hurt ears ;)
+	setVolume(150);
+	
 	Serial.println("Tune ready !");
+	return 1;
 }
 
 /**
 	Reads from an SCI register
 */
 
-unsigned int Tune::readSCI(unsigned char registerAddress)
+unsigned int Tune::readSCI(byte registerAddress)
 {
-	unsigned char hiByte, loByte;
+	byte hiByte, loByte;
 	
-	// DREQ high <-> VS1011 available
-	while (!digitalRead(DREQ));
-	// Deselect SD's chip select
-	digitalWrite(SDCS, HIGH);
-	// Deselect data ctrl & select control
-	digitalWrite(XDCS, HIGH);
-	digitalWrite(XCS, LOW);
+	while (!digitalRead(DREQ)); // DREQ high <-> VS1011 available
+	csLow(); // Select control
   
-	// Read instruction
-	SPI.transfer(0x03);
+	SPI.transfer(VS_READ); // Read instruction
 	SPI.transfer(registerAddress);
+	
 	// MSB first
 	hiByte = SPI.transfer(0x00); 
-	loByte = SPI.transfer(0x00);
-	
 	while (!digitalRead(DREQ)); // wait 'til cmd is complete
-  
-	// Deselect control
-	digitalWrite(XCS, HIGH);
+	loByte = SPI.transfer(0x00);
+	while (!digitalRead(DREQ));
+
+	csHigh(); // Deselect control
   
 	unsigned int response = word(hiByte, loByte);
-	
 	return response;
 }
 
@@ -113,47 +122,46 @@ unsigned int Tune::readSCI(unsigned char registerAddress)
 	Writes to an SCI register
 */
 
-void Tune::writeSCI(unsigned char registerAddress, unsigned char highbyte, unsigned char lowbyte)
+void Tune::writeSCI(byte registerAddress, byte highbyte, byte lowbyte)
 {
-	// DREQ high <-> VS1011 available
-	while (!digitalRead(DREQ));
-	// Deselect SD's chip select
-	digitalWrite(SDCS, HIGH);
-	// Deselect data ctrl & select control
-	digitalWrite(XDCS, HIGH);
-	digitalWrite(XCS, LOW);
+	while (!digitalRead(DREQ)); // DREQ high <-> VS1011 available
+	csLow(); // Select control
 
-	// Write instruction
-	SPI.transfer(0x02);
+	SPI.transfer(VS_WRITE); // Write instruction
 	SPI.transfer(registerAddress);
+	
 	// MSB first
 	SPI.transfer(highbyte); 
+	while (!digitalRead(DREQ)); // wait 'til cmd is complete
 	SPI.transfer(lowbyte);
-	
-    // wait til cmd is complete
 	while (!digitalRead(DREQ));
 	
-	// Deselect control
-	digitalWrite(XCS, HIGH);
+	csHigh(); // Deselect control
+}
+
+/**
+	Writes to an SCI register
+*/
+
+void Tune::writeSCI(byte registerAddress, unsigned int data)
+{
+	byte hiByte = highByte(data);
+	byte loByte = lowByte(data);
+	writeSCI(registerAddress, hiByte, loByte);
 }
 
 /**
 	Feeds SDI data to the codec
 */
 
-void Tune::writeSDI(unsigned char data)
+void Tune::writeSDI(byte data)
 {
-	while (!digitalRead(DREQ));
-    // Deselect SD's chip select
-	digitalWrite(SDCS, HIGH);
-	// Deselect ctrl & select data control
-	digitalWrite(XCS, HIGH);
-	digitalWrite(XDCS, LOW);
+	while (!digitalRead(DREQ)); // DREQ high <-> VS1011 available
+	dcsLow(); // Select data control
 
 	SPI.transfer(data);
 	
-    // Deselect data ctrl
-    digitalWrite(XDCS, HIGH);
+	dcsHigh(); // Deselect data control
 }
 
 /**
@@ -161,14 +169,14 @@ void Tune::writeSDI(unsigned char data)
 	(see header file for register definitions)
 */
 
-void Tune::checkRegisters(void)
+void Tune::checkRegisters()
 {
 	for (int i=0; i<16; i++)
 	{
 		Serial.print("Reg ");
 		Serial.print(i);
 		Serial.print(" = 0x");
-		Serial.println(Tune::readSCI(i), HEX);
+		Serial.println(readSCI(i), HEX);
 	}
 }
 
@@ -179,13 +187,17 @@ void Tune::checkRegisters(void)
 	Reverse logic being more natural, here the user sets the volume from 0 (total silence) to 254 (max)
 */
 
-void Tune::setVolume(char leftChannel, char rightChannel)
+void Tune::setVolume(byte leftChannel, byte rightChannel)
 {
 	// Convert values into proper register entries
-	char leftAtt = 254 - leftChannel;
-	char rightAtt = 254 - rightChannel;
-	// Write that down to the register
-	Tune::writeSCI(SCI_VOL, leftAtt, rightAtt);
+	byte leftAtt = 254 - leftChannel;
+	byte rightAtt = 254 - rightChannel;
+	
+	// Avoid off-range values
+	constrain(leftAtt, 0, 254);
+	constrain(rightAtt, 0, 254);
+	
+	writeSCI(SCI_VOL, leftAtt, rightAtt);
 }
 
 /**
@@ -193,9 +205,49 @@ void Tune::setVolume(char leftChannel, char rightChannel)
 	Same logic as above
 */
 
-void Tune::setVolume(char volume) 
+void Tune::setVolume(byte volume)
 {
-	Tune::setVolume(volume, volume);
+	setVolume(volume, volume);
+}
+
+/**
+	Sets the bass : bassAmp is in dB (0 to 15) and bassFreq is in 10Hz steps (2 to 15)
+	Frequencies below bassFreq will be amplified.
+*/
+
+void Tune::setBass(unsigned int bassAmp, unsigned int bassFreq)
+{
+	// Avoid off-range values
+	constrain(bassAmp, 0, 15);
+	constrain(bassFreq, 2, 15);
+	
+	// Store new bass setting in a single variable
+	unsigned int BASS = ((bassAmp << 4) & 0x00F0) + (bassFreq & 0x000F);
+
+	unsigned int oldBassReg = Tune::readSCI(SCI_BASS); 		// Read and store current register value
+	unsigned int newBassReg = (oldBassReg & 0xFF00) + BASS; // Set new register value
+	
+	Tune::writeSCI(SCI_BASS, highByte(newBassReg), lowByte(newBassReg));
+}
+
+/** 
+	Sets the treble : trebAmp is in 1.5dB steps (-8 to 7) and trebFreq is in KHz (0 to 15)
+	Frequencies above trebFreq will be amplified.
+*/
+
+void Tune::setTreble(unsigned int trebAmp, unsigned int trebFreq)
+{
+	// Avoid off-range values
+	constrain(trebAmp, -8, 7);
+	constrain(trebFreq, 0, 15);
+	
+	// Store new treble setting in a single variable
+	unsigned int TREB = ((trebAmp << 12) & 0xF000) + ((trebFreq << 8) & 0x0F00);
+	
+	unsigned int oldTrebReg = Tune::readSCI(SCI_BASS); // Read and store current register value
+	unsigned int newTrebReg = (oldTrebReg & 0x00FF) + TREB; // Set new register value
+
+	Tune::writeSCI(SCI_BASS, highByte(newTrebReg), lowByte(newTrebReg));
 }
 
 /**
@@ -211,23 +263,49 @@ void Tune::sineTest(int freq)
 	byte endSine[8] = {0x45, 0x78, 0x69, 0x74, 0x00, 0x00, 0x00, 0x00};
 	
 	// Enable SDI tests
-	Tune::writeSCI(SCI_MODE, 0x08, 0x20);
+	setBit(SCI_MODE, SM_TESTS);
 	
 	// Activate sine test
 	for (int i=0; i<8; i++)
 	{
-		Tune::writeSDI(sine[i]);
+		writeSDI(sine[i]);
 	}
 	delay(2000);
 
 	// Deactivate sine test
 	for (int j=0; j<8; j++)
 	{
-		Tune::writeSDI(endSine[j]);
+		writeSDI(endSine[j]);
 	}
 
 	// Disable SDI tests
-	Tune::writeSCI(SCI_MODE, 0x08, 0x00);
+	clearBit(SCI_MODE, SM_TESTS);
+}
+
+/**
+	Positions a bit to '1' in a specific register
+	See Tune.h & datasheet for register & bit description.
+*/
+
+void Tune::setBit(byte regAddress, unsigned int bitAddress)
+{
+	unsigned int value = readSCI(regAddress);
+	value |= bitAddress;
+  
+	writeSCI(regAddress, value);
+}
+
+/**
+	Positions a bit to '0' in a specific register
+	See Tune.h & datasheet for register & bit description.
+*/
+
+void Tune::clearBit(byte regAddress, unsigned int bitAddress)
+{
+	unsigned int value = readSCI(regAddress);
+	value &= ~bitAddress;
+  
+	writeSCI(regAddress, value);
 }
 
 /** 
@@ -235,97 +313,76 @@ void Tune::sineTest(int freq)
 	http://en.wikipedia.org/wiki/8.3_filename
 */
 
-int Tune::play(const char* trackName)
-{	
-	// skip if already playing a track
+int Tune::play(char* trackName)
+{
 	if (isPlaying()) return 1;
 	
-	// exit if track not found
+	// Exit if track not found
 	if (!track.open(trackName, O_READ))
 	{
 		sd.errorHalt("Track not found !");
-		return 2;
+		return 3;
 	}
 	
-	// set playState flag
 	playState = playback;
 	
 	// Reset decode time & bitrate from previous playback
-	Tune::writeSCI(SCI_DECODE_TIME, 0, 0);
+	writeSCI(SCI_DECODE_TIME, 0);
 	delay(100);
 	
-	// skip ID3v2 tag if there's one
-	Tune::skipTag();
+	skipTag(); // Skip ID3v2 tag if there's one
 	
-	// feed VS1011e
-	Tune::feed();
-	// let the interrupt handle the rest of the process
-	attachInterrupt(0, feed, RISING);
-
-	// return value if everything went ok
+	feed(); // Feed VS1011e
+	attachInterrupt(0, feed, RISING); // Let the interrupt handle the rest of the process
+	
 	return 0;
 }
-
 
 /** 
 	Plays a track with the name formatted as "trackXXX.mp3"
 	Where "XXX" is a number between 0 and 999.
 */
 
-int Tune::playTrack(int trackNo)
-{
-	// storage place for track titles
+int Tune::playTrack(unsigned int trackNo)
+{	
+	// Storage place for track titles
 	char songName[] = "track000.mp3";
-	// print track number onto the file name
+	
+	// Avoid off-range values
+	constrain(trackNo, 0, 999);
+	
+	// Print track number onto the file name
 	sprintf(songName, "track%03d.mp3", trackNo);
-	// play given track
-	return Tune::play(songName);
-}
-
-/** 
-	Plays a playlist defined by an iteration of tracks with names formatted as above
-	Also handles track numbers from 0 to 999
-*/
-
-void Tune::playPlaylist(int startNo, int endNo)
-{
-	for (int z=startNo; z<=endNo; z++)
-	{
-		Tune::playTrack(z);
-	}
+	return play(songName);
 }
 
 /**
-	Sets the bass : bassAmp is in dB (0 to 15) and bassFreq is in 10Hz steps (2 to 15)
-	Frequencies below bassFreq will be amplified.
+	Tells the loop if the Tune is currently playing a file (even if paused)
 */
 
-void Tune::setBass(unsigned int bassAmp, unsigned int bassFreq)
+int Tune::isPlaying()
 {
-	// Store new bass setting in a single variable
-	unsigned int BASS = ((bassAmp << 4) & 0x00F0) + (bassFreq & 0x000F);
-	  // Read and store current register value
-	unsigned int oldBassReg = Tune::readSCI(SCI_BASS);
-	// Set new register value
-	unsigned int newBassReg = (oldBassReg & 0xFF00) + BASS;
-	// Send new value
-	Tune::writeSCI(SCI_BASS, highByte(newBassReg), lowByte(newBassReg));
+	int result;
+	
+	if (getState() == playback || getState() == pause)
+	{
+		result = 1;
+	}
+	else
+	{
+		result = 0;
+	}
+	return result;
 }
 
-/** 
-	Sets the treble : trebAmp is in 1.5dB steps (-8 to 7) and trebFreq is in KHz (0 to 15)
-	Frequencies above trebFreq will be amplified.
+/**
+	Returns current state of the Tune shield, i.e. 
+	0 for "idle", 1 for "playing" or 2 for "paused"
 */
 
-void Tune::setTreble(unsigned int trebAmp, unsigned int trebFreq)
-{// Store new treble setting in a single variable
-	unsigned int TREB = ((trebAmp << 12) & 0xF000) + ((trebFreq << 8) & 0x0F00);
-	// Read and store current register value
-	unsigned int oldTrebReg = Tune::readSCI(SCI_BASS);
-	// Set new register value
-	unsigned int newTrebReg = (oldTrebReg & 0x00FF) + TREB;
-	// Send new value
-	Tune::writeSCI(SCI_BASS, highByte(newTrebReg), lowByte(newTrebReg));
+int Tune::getState()
+{
+	return playState;
 }
 
 /**
@@ -335,9 +392,9 @@ void Tune::setTreble(unsigned int trebAmp, unsigned int trebFreq)
 
 void Tune::getTrackInfo(unsigned char frame, char* infobuffer)
 {
-	if (!Tune::getID3v1(frame, infobuffer))
+	if (!getID3v1(frame, infobuffer))
 	{
-		if (!Tune::getID3v2(infobuffer))
+		if (!getID3v2(infobuffer))
 		{
 			return;
 		}
@@ -351,9 +408,9 @@ void Tune::getTrackInfo(unsigned char frame, char* infobuffer)
 
 void Tune::getTrackTitle(char* infobuffer)
 {
-	if (!Tune::getID3v1Title(infobuffer))
+	if (!getID3v1Title(infobuffer))
 	{
-		if (!Tune::getID3v2(infobuffer))
+		if (!getID3v2(infobuffer))
 		{
 			return;
 		}
@@ -367,9 +424,9 @@ void Tune::getTrackTitle(char* infobuffer)
 
 void Tune::getTrackArtist(char* infobuffer)
 {
-	if (!Tune::getID3v1Artist(infobuffer))
+	if (!getID3v1Artist(infobuffer))
 	{
-		if (!Tune::getID3v2(infobuffer))
+		if (!getID3v2(infobuffer))
 		{
 			return;
 		}
@@ -383,9 +440,9 @@ void Tune::getTrackArtist(char* infobuffer)
 
 void Tune::getTrackAlbum(char* infobuffer)
 {
-	if (!Tune::getID3v1Album(infobuffer))
+	if (!getID3v1Album(infobuffer))
 	{
-		if (!Tune::getID3v2(infobuffer))
+		if (!getID3v2(infobuffer))
 		{
 			return;
 		}
@@ -393,7 +450,7 @@ void Tune::getTrackAlbum(char* infobuffer)
 }
 
 /**
-	Pauses data stream
+	Pauses data stream, does nothing if not playing
 */
 
 void Tune::pauseMusic()
@@ -406,67 +463,76 @@ void Tune::pauseMusic()
 }
 
 /**
-	Resumes data stream
+	Resumes data stream, does nothing if not playing
 */
 
 void Tune::resumeMusic()
 {
 	if (playState == pause)
 	{
-		Tune::feed();
+		feed();
 		playState = playback;
 		attachInterrupt(0, feed, RISING);
 	}
 }
-
 /**
 	Stops current track and cancels interrupt - allows next track to be played
 */
 
-void Tune::stopTrack()
+bool Tune::stopTrack()
 {
-	// Skip if not already playing
-	if ((playState != pause) && (playState != playback)) 
-	{
-		return;
-	}
+	if (!isPlaying()) return 0; // Skip if not already playing
 	
 	detachInterrupt(0);
 	playState = idle;
 	
-	track.close();
-}
-
-/**
-	Tells the loop if the Tune is currently playing a file (even if paused)
-*/
-
-int Tune::isPlaying()
-{
-	int result;
+	if (!track.close()) return 0; // close track
 	
-	if (getState() == playback)
-	{
-		result = 1;
-	}
-	else if (getState() == pause)
-	{
-		result = 1;
-	}
-	else
-	{
-		result = 0;
-	}
-	return result;
+	sendZeros(); // clear codec's buffer
+	
+	return 1;
 }
 
-/**
-	Returns current state of the Tune shield, i.e. "idle", "playing" or "paused"
+/** 
+	Selects SCI interface
 */
 
-int Tune::getState()
+void Tune::csLow()
 {
-	return playState;
+	// Make sure the other CSs are high before activating SCI
+	digitalWrite(SDCS, HIGH);
+	digitalWrite(XDCS, HIGH);
+	digitalWrite(XCS, LOW);
+}
+
+/** 
+	Deselects SCI interface
+*/
+
+void Tune::csHigh()
+{
+	digitalWrite(XCS, HIGH);
+}
+
+/** 
+	Selects SDI interface
+*/
+
+void Tune::dcsLow()
+{
+	// Make sure the other CSs are high before activating SDI
+	digitalWrite(SDCS, HIGH);
+	digitalWrite(XCS, HIGH);
+	digitalWrite(XDCS, LOW);
+}
+
+/** 
+	Deselects SDI interface
+*/
+
+void Tune::dcsHigh()
+{
+	digitalWrite(XDCS, HIGH);
 }
 
 /** 
@@ -497,14 +563,12 @@ void Tune::skipTag()
 		// a quirk of the spec is that the MSb of each byte is set to 0
 		unsigned long v21 =  (((unsigned long) pb[0] << (7*3)) + ((unsigned long) pb[1] << (7*2)) + ((unsigned long) pb[2] << (7)) + pb[3]);
 		
-		// go to end of tag
-		track.seekSet(v21);
+		track.seekSet(v21); // go to end of tag
 		return;
 	}
 	else
 	{
-		// if there's no tag, get back to start and playback
-		track.seekSet(0);
+		track.seekSet(0); // if there's no tag, get back to start and playback
 		return;
 	}
 }
@@ -516,9 +580,10 @@ void Tune::skipTag()
 int Tune::getID3v1(unsigned char offset, char* infobuffer)
 {
 	// pause track if already playing
-	if (playState == playback)
+	if (isPlaying())
 	{
-		detachInterrupt(0);
+		pauseMusic();
+		playState = pause;
 	}
 	// save current position for later
 	unsigned long currentPosition = track.curPosition();
@@ -527,16 +592,14 @@ int Tune::getID3v1(unsigned char offset, char* infobuffer)
 	tagFrame = offset;
 	
 	unsigned char ID3v1[3]; // array to store the 'TAG' identifier of ID3v1 tags
-		
-	// skip to end of file
-	unsigned long tagPosition = track.fileSize();
+
+	unsigned long tagPosition = track.fileSize(); // skip to end of file
 	
 	// skip to tag start
 	tagPosition -= 128;
 	track.seekSet(tagPosition);
 	
-	// read the first 3 characters available
-	track.read(ID3v1, 3);
+	track.read(ID3v1, 3); // read the first 3 characters available
 	
 	// if they're 'TAG'
 	if (ID3v1[0] == 'T' && ID3v1[1] == 'A' && ID3v1[2] == 'G')
@@ -546,25 +609,26 @@ int Tune::getID3v1(unsigned char offset, char* infobuffer)
 		tagPosition = (track.curPosition() + offset);
 		track.seekSet(tagPosition);
 		
-		// read the tag and store it
-		track.read(infobuffer, 30);
+		track.read(infobuffer, 30); // read the tag and store it
 		
-		//go back to where we stopped and enable playback again
+		// go back to where we stopped and enable playback again
 		track.seekSet(currentPosition);
-		if (playState == playback)
+		if (isPlaying())
 		{
-			attachInterrupt(0, feed, RISING);
+			resumeMusic();
+			playState = playback;
 		}
 		return 1;
 	}
 	// if they're not
 	else
 	{
-		//go back to where we stopped and enable playback again
+		// go back to where we stopped and enable playback again
 		track.seekSet(currentPosition);
-		if (playState == playback)
+		if (isPlaying())
 		{
-			attachInterrupt(0, feed, RISING);
+			resumeMusic();
+			playState = playback;
 		}
 		return 0;
 	}
@@ -626,9 +690,10 @@ int Tune::getID3v1Album(char* infobuffer)
 int Tune::getID3v2(char* infobuffer)
 {  
 	// pause track if already playing
-	if (playState == playback)
+	if (isPlaying())
 	{
-		detachInterrupt(0);
+		pauseMusic();
+		playState = pause;
 	}
 	// save current position for later
 	unsigned long currentPosition = track.curPosition();
@@ -656,46 +721,50 @@ int Tune::getID3v2(char* infobuffer)
 		// a quirk of the spec is that the MSb of each byte is set to 0
 		length =  (((unsigned long) pb[0] << (7*3)) + ((unsigned long) pb[1] << (7*2)) + ((unsigned long) pb[2] << (7)) + pb[3]);
 		
-		if (tagVersion ==2)
+		if (tagVersion == 2)
 		{
 			Tune::findv22(infobuffer);
-			//go back to where we stopped and enable playback again
+			// go back to where we stopped and enable playback again
 			track.seekSet(currentPosition);
-			if (playState == playback)
+			if (isPlaying())
 			{
-				attachInterrupt(0, feed, RISING);
+				resumeMusic();
+				playState = playback;
 			}
 			return 2;
 		}
 		else if (tagVersion == 3)
 		{
 			Tune::findv23(infobuffer);
-			//go back to where we stopped and enable playback again
+			// go back to where we stopped and enable playback again
 			track.seekSet(currentPosition);
-			if (playState == playback)
+			if (isPlaying())
 			{
-				attachInterrupt(0, feed, RISING);
+				resumeMusic();
+				playState = playback;
 			}
 			return 3;
 		}
 		else
 		{
-			//go back to where we stopped and enable playback again
+			// go back to where we stopped and enable playback again
 			track.seekSet(currentPosition);
-			if (playState == playback)
+			if (isPlaying())
 			{
-				attachInterrupt(0, feed, RISING);
+				resumeMusic();
+				playState = playback;
 			}
 			return 9;
 		}
 	}
 	else
 	{
-		//go back to where we stopped and enable playback again
+		// go back to where we stopped and enable playback again
 		track.seekSet(currentPosition);
-		if (playState == playback)
+		if (isPlaying())
 		{
-			attachInterrupt(0, feed, RISING);
+			resumeMusic();
+			playState = playback;
 		}
 		return 0;
 	}
@@ -783,9 +852,7 @@ void Tune::findv23(char* infobuffer)
 				  
 			// we have to combine these bytes together into a single value
 			unsigned long tl = ((unsigned long) pb[0] << (8 * 3)) + ((unsigned long) pb[1] << (8 * 2)) + ((unsigned long) pb[2] << (8 * 1)) + pb[3]; 
-
-			// skip two bytes we don't need
-			track.read(pb, 2);
+			track.read(pb, 2); // skip two bytes we don't need
 	  
 			// start reading the actual tag and store it
 			track.read(infobuffer, tl);
@@ -800,28 +867,47 @@ void Tune::findv23(char* infobuffer)
 
 void Tune::feed()
 {
+	sei();
 	while (digitalRead(DREQ))
 	{
-		//Go out to SD card and try reading 32 new bytes of the track
-		if (!track.read(Tune::buffer, sizeof(Tune::buffer)))
+		// Go out to SD card and try reading 32 new bytes of the track
+		if (!track.read(buffer, sizeof(buffer)))
 		{
+			// exit if end of file reached
 			track.close();
-			playState = idle;	
 			detachInterrupt(0);
+			sendZeros();
+			playState = idle;
+			
 			break;
 		}
-		// Deselect SD's chip select
-		digitalWrite(SDCS, HIGH);
-		// Deselect ctrl & select data control
-		digitalWrite(XCS, HIGH);
-		digitalWrite(XDCS, LOW);
+		
+		cli();
+		dcsLow(); // Select data control
 		
 		// Feed the chip
-		for (int j=0; j<32; j++)
+		for (int i=0; i<32; i++)
 		{
-			SPI.transfer(Tune::buffer[j]);
+			SPI.transfer(buffer[i]);
 		}
-		// Deselect data control
-		digitalWrite(XDCS, HIGH);	
+		
+		dcsHigh(); // Deselect data control
+		sei();
 	}
+}
+
+/** 
+	Sends zeros to the codec to make sure nothing's left unplayed
+*/
+
+void Tune::sendZeros()
+{
+	dcsLow(); // Select data control
+	
+	for (int i=0; i<2052; i++)
+	{
+		while (!digitalRead(DREQ)); // wait until chip is ready
+		SPI.transfer(0); 			// send zero	
+	}
+	dcsHigh(); // Deselect data control
 }

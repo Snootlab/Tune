@@ -23,7 +23,7 @@ void setup()
 {
   // Tune shield initialization
   player.begin();
-  player.setVolume(200);
+  player.setVolume(180);
   
   // Deuligne shield initialization
   Wire.begin();
@@ -37,7 +37,7 @@ void setup()
   delay(1000);
   
   // Select the track you want to play
-  player.play("Thievery.mp3");
+  player.play("MySong.mp3");
 }
 
 void loop()

@@ -37,7 +37,7 @@ void setup()
   // Register checking (prints on serial monitor, hence the Serial.begin())
   player.checkRegisters();
   // Bass setting
-  player.setBass(50, 5);
+  player.setBass(5, 5);
   // Checking again to see if changes have been taken in account
   Serial.println("New register values :");
   player.checkRegisters();
@@ -46,17 +46,17 @@ void setup()
   /* Audio output */
   
   // Mute left channel
-  player.setVolume(0, 200);
+  player.setVolume(0, 180);
   // Sine test @ 1 KHz
-  player.sineTest(STD);
+  player.sineTest();
   // Mute right channel
-  player.setVolume(200, 0);
+  player.setVolume(180, 0);
   // Sine test @ 1 KHz
-  player.sineTest(STD);
+  player.sineTest();
   delay(1000);
   
   // Enable both audio outputs
-  player.setVolume(200);
+  player.setVolume(180);
   // Play an MP3 file (change track name to the one you want)
   // Comment line if no SD card is inserted in the shield 
   player.play("MySong.mp3");
@@ -87,12 +87,10 @@ void loop()
   if (counter % 2 == 0)
   {
     player.resumeMusic();
-    Serial.println("Pause");
   }
   // Or turn off music if it has been pressed 1, 3, 5... times
   else
   {
     player.pauseMusic();
-    Serial.println("Resume");
   }
 }

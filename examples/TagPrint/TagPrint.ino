@@ -19,13 +19,13 @@ void setup()
 {
   // Shield initialization 
   player.begin();
-  player.setVolume(200);
+  player.setVolume(170);
   
   // Start serial comunication
   Serial.begin(9600);
   
   // Select the track you want to play
-  player.play("track001.mp3");
+  player.play("MySong.mp3");
   
   // Get the tags and print them on serial monitor
   Serial.print("Currently playing : ");

@@ -3,9 +3,17 @@
 	Coded by Laetitia Hardy-Dessources
 	Inspired by SFEMP3Shield library by Bill Porter
 	
-	2015.04.24 - v1.1
-	This version is based on Bill Greiman's SdFat lib instead of the Arduino IDE's SD lib.
+	2015.08.25 - v1.2 - Rework > cleaned out some useless code, optimized the useful one, wrote new functions to help
 	
+	Changelog : added new method for ::sineTest (defaults @ 1 KHz) + new constants for testing (STD -> STD1, new STD2 & STD3)
+					  new method for ::writeSCI (data sent with a single int)
+					  ::setBit and ::clearBit to access specific register bits
+					  ::sendZeros to clear buffer after a track so that file sequence is more fluid
+				removed ::playPlaylist because it doesn't work anymore (will be fixed in a next version)
+				modif ::stopTrack and ::feed to improve tracklisting
+					  ::setVolume, ::setBass, ::setTreble, ::playTrack to avoid off-range values
+					  ::begin to add return value (1 if everything went OK, 0 if the SD can't initialize) & set volume at setup
+
 	Licence CC-BY-SA 3.0
 */
 
@@ -164,11 +172,25 @@
 #define SV_RIGHT_BITS 8
 #define SV_RIGHT_MASK 0x00FF
 
+/* Intruction codes */
+
+#define VS_READ 0x03
+#define VS_WRITE 0x02
+
 /* Sine test frequencies */
 
-#define HIS 0x3F // HIgheSt  @ 11.625KHz
-#define STD 0x44 // STanDard @ 1KHz
-#define LOS 0xC1 // LOweSt   @ 86.13Hz
+#define LOS 0x61  // LOweSt   @ 86.13 Hz
+#define STD1 0x24 // STanDard @ 1 KHz
+#define STD2 0x28 // STanDard @ 2 KHz
+#define STD3 0x18 // STanDard @ 3 KHz
+#define HIS 0x1F  // HIgheSt  @ 5.625 KHz
+
+/* Tune state while running */
+
+static unsigned int playState;
+#define idle		0
+#define playback	1
+#define pause		2
 
 /* ID3v1 tag offsets */
 
@@ -185,45 +207,44 @@ static unsigned long length; // total length of the tag (without header)
 static unsigned char tagFrame;
 static char tab[5]; 		 // array to stock frame identifier
 
-/* Tune state while running */
-
-#define idle		0
-#define playback	1
-#define pause		2
-
-static int playState = idle;
-
 extern SdFat sd;
 
 class Tune
 {
 	public : 
-		void begin();
-		static unsigned int readSCI(unsigned char registerAddress);
-		static void writeSCI(unsigned char registerAddress, unsigned char highbyte, unsigned char lowbyte);
-		void writeSDI(unsigned char data);
+		bool begin();
+		unsigned int readSCI(byte registerAddress);
+		void writeSCI(byte registerAddress, byte highbyte, byte lowbyte);
+		void writeSCI(byte registerAddress, unsigned int data);
+		void writeSDI(byte data);
 		void checkRegisters();
-		void setVolume(char leftChannel, char rightChannel);
-		void setVolume(char volume);
-		void sineTest(int freq);
-		int play(const char* trackName);
-		int playTrack(int trackNo);
-		void playPlaylist(int startNo, int endNo);
+		void setVolume(byte leftChannel, byte rightChannel);
+		void setVolume(byte volume);
 		void setBass(unsigned int bassAmp, unsigned int bassFreq);
 		void setTreble(unsigned int trebAmp, unsigned int trebFreq);
+		void sineTest(int freq = STD1);
+		void setBit(byte regAddress, unsigned int bitAddress);
+		void clearBit(byte regAddress, unsigned int bitAddress);
+		int play(char* trackName);
+		int playTrack(unsigned int trackNo);
+		int isPlaying();
+		int getState();
 		void getTrackInfo(unsigned char frame, char* infobuffer);
 		void getTrackTitle(char* infobuffer);
 		void getTrackArtist(char* infobuffer);
 		void getTrackAlbum(char* infobuffer);
 		void pauseMusic();
 		void resumeMusic();
-		void stopTrack();
-		int isPlaying();
-		int getState();
+		bool stopTrack();
+		// TODO : void playPlaylist(int, int); bool playNext();
 		
-	private :
+	private : 
 		static SdFile track;
-		static unsigned char buffer[32];
+		static byte buffer[32];
+		static void csLow();
+		static void csHigh();
+		static void dcsLow();
+		static void dcsHigh();
 		void skipTag();
 		int getID3v1(unsigned char offset, char* infobuffer);
 		int getID3v1Title(char* infobuffer);
@@ -233,6 +254,8 @@ class Tune
 		void findv22(char* infobuffer);
 		void findv23(char* infobuffer);
 		static void feed();
+		static void sendZeros();
+		// TODO : byte LoadUserCode(char*); int readWRAM(int); void writeWRAM(int, int);
 };
 
 #endif

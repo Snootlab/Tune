@@ -18,12 +18,15 @@ writeSCI	KEYWORD2
 writeSDI	KEYWORD2
 checkRegisters	KEYWORD2
 setVolume	KEYWORD2
-sineTest	KEYWORD2
-play	KEYWORD2
-playTrack	KEYWORD2
-playPlaylist	KEYWORD2
 setBass	KEYWORD2
 setTreble	KEYWORD2
+sineTest	KEYWORD2
+setBit	KEYWORD2
+clearBit	KEYWORD2
+play	KEYWORD2
+playTrack	KEYWORD2
+isPlaying	KEYWORD2
+getState	KEYWORD2
 getTrackInfo	KEYWORD2
 getTrackTitle	KEYWORD2
 getTrackArtist	KEYWORD2
@@ -31,8 +34,6 @@ getTrackAlbum	KEYWORD2
 pauseMusic	KEYWORD2
 resumeMusic	KEYWORD2
 stopTrack	KEYWORD2
-isPlaying	KEYWORD2
-getState	KEYWORD2
 
 #######################################
 # Constants (LITERAL1)
@@ -59,8 +60,10 @@ TITLE	LITERAL1
 ARTIST	LITERAL1
 ALBUM	LITERAL1
 
-STD	LITERAL1
 LOS	LITERAL1
 HIS	LITERAL1
+STD1	LITERAL1
+STD2	LITERAL1
+STD3	LITERAL1
 
 

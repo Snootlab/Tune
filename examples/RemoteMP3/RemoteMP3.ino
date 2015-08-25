@@ -40,7 +40,7 @@ decode_results results;
 Tune player;
 
 // Variable to store the current volume value
-int volume = 200;
+int volume = 180;
 
 void setup()
 {
@@ -65,7 +65,7 @@ void loop()
       // Check all registers
       case MENU : player.checkRegisters(); break;
       // Sine test @ 1 KHz
-      case TEST : player.sineTest(STD); break;
+      case TEST : player.sineTest(); break;
       // Set volume up or down
       case PLUS : volume += 5; player.setVolume(volume); break;
       case LESS : volume -= 5; player.setVolume(volume); break;
@@ -80,7 +80,7 @@ void loop()
       case EIGHT : player.playTrack(8); break;
       case NINE : player.playTrack(9); break;
       // Play another track (change track name to fit the one you want)
-      case PLAY : player.play("MySong.mp3");
+      case PLAY : player.play("MySong.mp3"); irrecv.resume(); break;
       // exit loop
       default : break;
     }
