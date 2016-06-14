@@ -25,7 +25,7 @@ void setup()
   Serial.begin(9600);
   
   // Select the track you want to play
-  player.play("MySong.mp3");
+  player.play("YourSong.mp3");
   
   // Get the tags and print them on serial monitor
   Serial.print("Currently playing : ");

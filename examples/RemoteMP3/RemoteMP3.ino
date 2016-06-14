@@ -80,7 +80,7 @@ void loop()
       case EIGHT : player.playTrack(8); break;
       case NINE : player.playTrack(9); break;
       // Play another track (change track name to fit the one you want)
-      case PLAY : player.play("MySong.mp3"); irrecv.resume(); break;
+      case PLAY : player.play("YourSong.mp3"); irrecv.resume(); break;
       // exit loop
       default : break;
     }

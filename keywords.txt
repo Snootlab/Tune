@@ -25,6 +25,10 @@ setBit	KEYWORD2
 clearBit	KEYWORD2
 play	KEYWORD2
 playTrack	KEYWORD2
+playPlaylist	KEYWORD2
+playNext	KEYWORD2
+playPrev	KEYWORD2
+getNbTracks	KEYWORD2
 isPlaying	KEYWORD2
 getState	KEYWORD2
 getTrackInfo	KEYWORD2

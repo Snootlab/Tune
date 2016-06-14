@@ -3,17 +3,15 @@
 	Coded by Laetitia Hardy-Dessources
 	Inspired by SFEMP3Shield library by Bill Porter
 	
-	2015.08.25 - v1.2 - Rework > cleaned out some useless code, optimized the useful one, wrote new functions to help
+	2016.06.14 - v1.3 - Rework again, improving track browsing management
 	
-	Changelog : added new method for ::sineTest (defaults @ 1 KHz) + new constants for testing (STD -> STD1, new STD2 & STD3)
-					  new method for ::writeSCI (data sent with a single int)
-					  ::setBit and ::clearBit to access specific register bits
-					  ::sendZeros to clear buffer after a track so that file sequence is more fluid
-				removed ::playPlaylist because it doesn't work anymore (will be fixed in a next version)
-				modif ::stopTrack and ::feed to improve tracklisting
-					  ::setVolume, ::setBass, ::setTreble, ::playTrack to avoid off-range values
-					  ::begin to add return value (1 if everything went OK, 0 if the SD can't initialize) & set volume at setup
-
+	Changelog : added playPlaylist() to play tracks named for use with playTrack()
+					  getNbTracks() so user can know how many playable files are available
+					  playNext() & playPrev(), self-explanatory
+				modif begin() to include listing of files for playlisting
+	NOTE : now all .mp3 files HAVE TO be formatted EXACTLY 8.3
+				> i.e. "MySong00.mp3" is valid, "MySong.mp3" isn't
+				
 	Licence CC-BY-SA 3.0
 */
 
@@ -55,6 +53,10 @@ bool Tune::begin()
 		sd.initErrorHalt(); // describe problem if there's one
 		return 0; 
 	}
+	
+	// Tracklisting also return the number of playable files
+	Serial.print(listFiles());
+	Serial.print(" tracks found, ");
 	
 	// SPI bus initialization
 	SPI.begin();
@@ -224,10 +226,10 @@ void Tune::setBass(unsigned int bassAmp, unsigned int bassFreq)
 	// Store new bass setting in a single variable
 	unsigned int BASS = ((bassAmp << 4) & 0x00F0) + (bassFreq & 0x000F);
 
-	unsigned int oldBassReg = Tune::readSCI(SCI_BASS); 		// Read and store current register value
+	unsigned int oldBassReg = readSCI(SCI_BASS); 		// Read and store current register value
 	unsigned int newBassReg = (oldBassReg & 0xFF00) + BASS; // Set new register value
 	
-	Tune::writeSCI(SCI_BASS, highByte(newBassReg), lowByte(newBassReg));
+	writeSCI(SCI_BASS, highByte(newBassReg), lowByte(newBassReg));
 }
 
 /** 
@@ -244,10 +246,10 @@ void Tune::setTreble(unsigned int trebAmp, unsigned int trebFreq)
 	// Store new treble setting in a single variable
 	unsigned int TREB = ((trebAmp << 12) & 0xF000) + ((trebFreq << 8) & 0x0F00);
 	
-	unsigned int oldTrebReg = Tune::readSCI(SCI_BASS); // Read and store current register value
+	unsigned int oldTrebReg = readSCI(SCI_BASS); // Read and store current register value
 	unsigned int newTrebReg = (oldTrebReg & 0x00FF) + TREB; // Set new register value
 
-	Tune::writeSCI(SCI_BASS, highByte(newTrebReg), lowByte(newTrebReg));
+	writeSCI(SCI_BASS, highByte(newTrebReg), lowByte(newTrebReg));
 }
 
 /**
@@ -277,7 +279,6 @@ void Tune::sineTest(int freq)
 	{
 		writeSDI(endSine[j]);
 	}
-
 	// Disable SDI tests
 	clearBit(SCI_MODE, SM_TESTS);
 }
@@ -356,23 +357,96 @@ int Tune::playTrack(unsigned int trackNo)
 	return play(songName);
 }
 
+/** 
+	Plays a combo of tracks with names formatted like above
+	Caution : playback won't stop until you reached the end of the playlist
+*/
+
+void Tune::playPlaylist(int start, int end)
+{
+	for (int i=start; i<=end; i++)
+	{
+		playTrack(i);
+		while(isPlaying()) delay(1); // experimentally found that the small delay made it work
+	}
+}
+
+/** 
+	Stops current track and plays next available track
+	Loops around if it reaches the end of the tracklist
+*/
+
+void Tune::playNext()
+{
+	char filename[13] = "";
+	int charCount = 0;
+	int i;
+	
+	track.getName(filename, 13); // get current filename
+		
+	for (i=0; i<=nb_track; i++) // look in the tracklist
+	{
+		for (int j=0; j<13; j++)
+		{
+			if (filename[j] == tracklist[i][j]) charCount++;
+			else break;  // move on if a single character differs
+		}
+		if (charCount == 13) break; // found current track in the list, exit loop
+		else charCount = 0; // reset for next turn
+	}
+	stopTrack(); // stop current track
+	
+	if (i < nb_track-1) i++; // search for next track
+	else i = 0; // wrap around
+	
+	for (int j=0; j<13; j++)
+		filename[j] = tracklist[i][j];
+
+	play(filename); // and play said file
+}
+
+/** 
+	Stops current track and plays previous available track
+	Loops around if it reaches the beginning of the tracklist
+*/
+
+void Tune::playPrev()
+{
+	char filename[13] = "";
+	int charCount = 0;
+	int i;
+	
+	track.getName(filename, 13); // get current filename
+		
+	for (i=0; i<=nb_track; i++) // look in the tracklist
+	{
+		for (int j=0; j<13; j++)
+		{
+			if (filename[j] == tracklist[i][j]) charCount++;
+			else break; // move on if a single character differs
+		}
+		if (charCount == 13) break; // found current track in the list, exit loop
+		else charCount = 0; // reset for next turn
+	}
+	stopTrack(); // stop current track
+	
+	if (i > 0) i--; // search for next track
+	else i = nb_track-1; // wrap around
+	
+	for (int j=0; j<13; j++)
+		filename[j] = tracklist[i][j];
+	
+	play(filename); // and play said file
+}
+
 /**
 	Tells the loop if the Tune is currently playing a file (even if paused)
 */
 
 int Tune::isPlaying()
 {
-	int result;
-	
-	if (getState() == playback || getState() == pause)
-	{
-		result = 1;
-	}
-	else
-	{
-		result = 0;
-	}
-	return result;
+	if (getState() == playback || getState() == pause) return 1;
+	else return 0;
 }
 
 /**
@@ -394,10 +468,7 @@ void Tune::getTrackInfo(unsigned char frame, char* infobuffer)
 {
 	if (!getID3v1(frame, infobuffer))
 	{
-		if (!getID3v2(infobuffer))
-		{
-			return;
-		}
+		if (!getID3v2(infobuffer)) return;
 	}
 }
 
@@ -410,10 +481,7 @@ void Tune::getTrackTitle(char* infobuffer)
 {
 	if (!getID3v1Title(infobuffer))
 	{
-		if (!getID3v2(infobuffer))
-		{
-			return;
-		}
+		if (!getID3v2(infobuffer)) return;
 	}
 }
 
@@ -426,10 +494,7 @@ void Tune::getTrackArtist(char* infobuffer)
 {
 	if (!getID3v1Artist(infobuffer))
 	{
-		if (!getID3v2(infobuffer))
-		{
-			return;
-		}
+		if (!getID3v2(infobuffer)) return;
 	}
 }
 
@@ -442,10 +507,7 @@ void Tune::getTrackAlbum(char* infobuffer)
 {
 	if (!getID3v1Album(infobuffer))
 	{
-		if (!getID3v2(infobuffer))
-		{
-			return;
-		}
+		if (!getID3v2(infobuffer)) return;
 	}
 }
 
@@ -489,7 +551,6 @@ bool Tune::stopTrack()
 	if (!track.close()) return 0; // close track
 	
 	sendZeros(); // clear codec's buffer
-	
 	return 1;
 }
 
@@ -533,6 +594,101 @@ void Tune::dcsLow()
 void Tune::dcsHigh()
 {
 	digitalWrite(XDCS, HIGH);
+}
+
+/** 
+	Makes a list of the playable files on the SD card
+	Returns how many of them are available
+*/
+
+int Tune::listFiles()
+{
+	nb_track = 0;
+	char filename[13] = "";
+	char firstfilename[13] = "";
+	
+	// Save the name of the first file to rewind the directory later
+	track.openNext(sd.vwd(), O_READ);
+	track.getName(firstfilename, 13);
+	if (isMP3(firstfilename)) nb_track++;
+	track.close();
+	
+	// open next file in root.  The volume working directory, vwd, is root
+	while (track.openNext(sd.vwd(), O_READ)) 
+	{
+		track.getName(filename, 13);
+		if (isMP3(filename)) nb_track++;
+		track.close();
+	}
+	
+	// now that we know how many available tracks we have
+	// we can itinialize the 2D-array with the correct dimensions
+	tracklist = (char**) malloc (nb_track*sizeof(char*));
+	for (int k=0; k<nb_track; k++)
+	{
+		tracklist[k] = (char*) malloc(13 * sizeof(char));
+	}
+	
+	nb_track = 0; // reset for rerun
+
+	// rewind for first run then loop again
+	track.open(firstfilename);
+	track.getName(filename, 13);
+	
+	if (isMP3(filename)) 
+	{
+		for (int j=0; j<13; j++)
+		{
+			tracklist[nb_track][j] = filename[j]; // actually save the filename
+		}
+		nb_track++;
+	}
+	track.close();
+	
+	// save as above...
+	while (track.openNext(sd.vwd(), O_READ))
+	{
+		track.getName(filename, 13);
+		
+		if (isMP3(filename)) 
+		{
+			for (int j=0; j<13; j++)
+			{
+				tracklist[nb_track][j] = filename[j];
+			}
+			nb_track++;
+		}
+		track.close();
+	}
+	return nb_track;
+}
+
+/** 
+	Checks if the file is an .mp3
+*/
+
+bool Tune::isMP3(char* filename)
+{
+	for (int i=0; i<10; i++)
+	{
+		// search for file extension
+		if (filename[i] == '.')
+		{
+			// and check it
+			if( (filename[i+1] == 'm' || 'M') && (filename[i+2] == 'p' || 'P') && (filename[i+3] == '3') ) return 1; // valid file !
+			else return 0;
+		}
+	}
+	return 0;
+}
+
+/** 
+	Searches for an ID3v2 tag and skips it so there's no delay for playback
+*/
+
+unsigned int Tune::getNbTracks()
+{
+	return nb_track;
 }
 
 /** 
@@ -640,14 +796,8 @@ int Tune::getID3v1(unsigned char offset, char* infobuffer)
 
 int Tune::getID3v1Title(char* infobuffer)
 {
-	if (Tune::getID3v1(TITLE, infobuffer))
-	{
-		return 1;
-	}
-	else
-	{
-		return 0;
-	}
+	if (getID3v1(TITLE, infobuffer)) return 1;
+	else return 0;
 }
 
 /** 
@@ -656,14 +806,8 @@ int Tune::getID3v1Title(char* infobuffer)
 
 int Tune::getID3v1Artist(char* infobuffer)
 {
-	if (Tune::getID3v1(ARTIST, infobuffer))
-	{
-		return 1;
-	}
-	else
-	{
-		return 0;
-	}
+	if (getID3v1(ARTIST, infobuffer)) return 1;
+	else return 0;
 }
 
 /** 
@@ -672,14 +816,8 @@ int Tune::getID3v1Artist(char* infobuffer)
 
 int Tune::getID3v1Album(char* infobuffer)
 {
-	if (Tune::getID3v1(ALBUM, infobuffer))
-	{
-		return 1;
-	}
-	else
-	{
-		return 0;
-	}
+	if (getID3v1(ALBUM, infobuffer)) return 1;
+	else return 0;
 }
 
 /**
@@ -723,7 +861,7 @@ int Tune::getID3v2(char* infobuffer)
 		
 		if (tagVersion == 2)
 		{
-			Tune::findv22(infobuffer);
+			findv22(infobuffer);
 			// go back to where we stopped and enable playback again
 			track.seekSet(currentPosition);
 			if (isPlaying())
@@ -735,7 +873,7 @@ int Tune::getID3v2(char* infobuffer)
 		}
 		else if (tagVersion == 3)
 		{
-			Tune::findv23(infobuffer);
+			findv23(infobuffer);
 			// go back to where we stopped and enable playback again
 			track.seekSet(currentPosition);
 			if (isPlaying())
@@ -881,7 +1019,6 @@ void Tune::feed()
 			
 			break;
 		}
-		
 		cli();
 		dcsLow(); // Select data control
 		
@@ -890,7 +1027,6 @@ void Tune::feed()
 		{
 			SPI.transfer(buffer[i]);
 		}
-		
 		dcsHigh(); // Deselect data control
 		sei();
 	}
@@ -903,7 +1039,6 @@ void Tune::feed()
 void Tune::sendZeros()
 {
 	dcsLow(); // Select data control
-	
 	for (int i=0; i<2052; i++)
 	{
 		while (!digitalRead(DREQ)); // wait until chip is ready

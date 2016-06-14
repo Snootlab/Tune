@@ -59,7 +59,7 @@ void setup()
   player.setVolume(180);
   // Play an MP3 file (change track name to the one you want)
   // Comment line if no SD card is inserted in the shield 
-  player.play("MySong.mp3");
+  player.play("track001.mp3");
 }
 
 /* The loop checks if someone pressed the button to pause/resume the music */

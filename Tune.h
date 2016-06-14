@@ -3,17 +3,15 @@
 	Coded by Laetitia Hardy-Dessources
 	Inspired by SFEMP3Shield library by Bill Porter
 	
-	2015.08.25 - v1.2 - Rework > cleaned out some useless code, optimized the useful one, wrote new functions to help
+	2016.06.14 - v1.3 - Rework again, improving track browsing management
 	
-	Changelog : added new method for ::sineTest (defaults @ 1 KHz) + new constants for testing (STD -> STD1, new STD2 & STD3)
-					  new method for ::writeSCI (data sent with a single int)
-					  ::setBit and ::clearBit to access specific register bits
-					  ::sendZeros to clear buffer after a track so that file sequence is more fluid
-				removed ::playPlaylist because it doesn't work anymore (will be fixed in a next version)
-				modif ::stopTrack and ::feed to improve tracklisting
-					  ::setVolume, ::setBass, ::setTreble, ::playTrack to avoid off-range values
-					  ::begin to add return value (1 if everything went OK, 0 if the SD can't initialize) & set volume at setup
-
+	Changelog : added playPlaylist() to play tracks named for use with playTrack()
+					  getNbTracks() so user can know how many playable files are available
+					  playNext() & playPrev(), self-explanatory
+				modif begin() to include listing of files for playlisting
+	NOTE : now all .mp3 files HAVE TO be formatted EXACTLY 8.3
+				> i.e. "MySong00.mp3" is valid, "MySong.mp3" isn't
+				
 	Licence CC-BY-SA 3.0
 */
 
@@ -208,6 +206,7 @@ static unsigned char tagFrame;
 static char tab[5]; 		 // array to stock frame identifier
 
 extern SdFat sd;
+static unsigned int nb_track;
 
 class Tune
 {
@@ -227,6 +226,10 @@ class Tune
 		void clearBit(byte regAddress, unsigned int bitAddress);
 		int play(char* trackName);
 		int playTrack(unsigned int trackNo);
+		void playPlaylist(int start, int end);
+		void playNext();
+		void playPrev();
+		unsigned int getNbTracks();
 		int isPlaying();
 		int getState();
 		void getTrackInfo(unsigned char frame, char* infobuffer);
@@ -236,7 +239,7 @@ class Tune
 		void pauseMusic();
 		void resumeMusic();
 		bool stopTrack();
-		// TODO : void playPlaylist(int, int); bool playNext();
+		
 		
 	private : 
 		static SdFile track;
@@ -245,6 +248,9 @@ class Tune
 		static void csHigh();
 		static void dcsLow();
 		static void dcsHigh();
+		char** tracklist;
+		int listFiles();
+		bool isMP3(char* filename);
 		void skipTag();
 		int getID3v1(unsigned char offset, char* infobuffer);
 		int getID3v1Title(char* infobuffer);

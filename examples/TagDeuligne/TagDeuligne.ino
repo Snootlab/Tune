@@ -37,7 +37,7 @@ void setup()
   delay(1000);
   
   // Select the track you want to play
-  player.play("MySong.mp3");
+  player.play("YourSong.mp3");
 }
 
 void loop()
